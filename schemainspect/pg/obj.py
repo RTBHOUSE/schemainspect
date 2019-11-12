@@ -33,6 +33,8 @@ PRIVILEGES_QUERY = resource_text("sql/privileges.sql")
 TRIGGERS_QUERY = resource_text("sql/triggers.sql")
 COLLATIONS_QUERY = resource_text("sql/collations.sql")
 RLSPOLICIES_QUERY = resource_text("sql/rlspolicies.sql")
+ROLES_QUERY = resource_text("sql/roles.sql")
+MEMBERSHIPS_QUERY = resource_text("sql/memberships.sql")
 
 
 class InspectedSelectable(BaseInspectedSelectable):
@@ -696,6 +698,104 @@ class InspectedRowPolicy(Inspected, TableRelated):
         return all(equalities)
 
 
+class InspectedRole(Inspected):
+    def __init__(self, name, superuser, createdb, inherit, login, replication, bypassrls,
+                 connection_limit, password, valid_until):
+        self.name = name
+        self.superuser = superuser
+        self.createdb = createdb
+        self.inherit = inherit
+        self.login = login
+        self.replication = replication
+        self.bypassrls = bypassrls
+        self.connection_limit = connection_limit
+        self.password = password
+        self.valid_until = valid_until
+
+    @property
+    def drop_statement(self):
+        return "drop role {};".format(self.name)
+
+    @property
+    def create_statement(self):
+        return "create role {} with {} {} {} {} {} {} connection limit {} password {} {};".format(
+            self.name,
+            self.superuser,
+            self.createdb,
+            self.inherit,
+            self.login,
+            self.replication,
+            self.bypassrls,
+            self.connection_limit,
+            ("'" + self.password + "'") if self.password else 'NULL',
+            " valid until {}".format(self.valid_until) if self.valid_until else "",
+        )
+
+    @property
+    def update_statement(self):
+        return "alter role {} with {} {} {} {} {} {} connection limit {} password {} {};".format(
+            self.name,
+            self.superuser,
+            self.createdb,
+            self.inherit,
+            self.login,
+            self.replication,
+            self.bypassrls,
+            self.connection_limit,
+            ("'" + self.password + "'") if self.password else 'NULL',
+            " valid until {}".format(self.valid_until) if self.valid_until else "",
+        )
+
+    def __eq__(self, other):
+        equalities = (
+            self.name == other.name,
+            self.superuser == other.superuser,
+            self.createdb == other.createdb,
+            self.inherit == other.inherit,
+            self.login == other.login,
+            self.replication == other.replication,
+            self.bypassrls == other.bypassrls,
+            self.connection_limit == other.connection_limit,
+            self.password == other.password,
+            self.valid_until == other.valid_until,
+        )
+        return all(equalities)
+
+
+class InspectedMembership(Inspected):
+    def __init__(self, roleid, member, admin_option, grantor):
+        self.roleid = roleid
+        self.member = member
+        self.admin_option = admin_option
+        self.grantor = grantor
+
+    @property
+    def create_statement(self):
+        return "grant {} to {} {} granted by {};".format(
+            self.roleid, self.member,
+            " with admin option " if self.admin_option else "", self.grantor
+        )
+
+    @property
+    def drop_statement(self):
+        return "revoke {} from {};".format(
+            self.roleid, self.member
+        )
+
+    @property
+    def key(self):
+        return self.roleid, self.member, self.admin_option
+
+    def __eq__(self, other):
+        equalities = (
+            self.roleid == other.roleid,
+            self.member == other.member,
+            self.admin_option == other.admin_option,
+            self.grantor == other.grantor,
+        )
+        return all(equalities)
+
+
 class PostgreSQL(DBInspector):
     def __init__(self, c, include_internal=False):
         def processed(q):
@@ -721,6 +821,8 @@ class PostgreSQL(DBInspector):
         self.TRIGGERS_QUERY = processed(TRIGGERS_QUERY)
         self.COLLATIONS_QUERY = processed(COLLATIONS_QUERY)
         self.RLSPOLICIES_QUERY = processed(RLSPOLICIES_QUERY)
+        self.ROLES_QUERY = processed(ROLES_QUERY)
+        self.MEMBERSHIPS_QUERY = processed(MEMBERSHIPS_QUERY)
         super(PostgreSQL, self).__init__(c, include_internal)
 
     def load_all(self):
@@ -736,6 +838,8 @@ class PostgreSQL(DBInspector):
         self.load_triggers()
         self.load_collations()
         self.load_rlspolicies()
+        self.load_roles()
+        self.load_memberships()
 
     def load_schemas(self):
         q = self.c.execute(self.SCHEMAS_QUERY)
@@ -760,6 +864,42 @@ class PostgreSQL(DBInspector):
         ]
 
         self.rlspolicies = od((p.key, p) for p in rlspolicies)
+
+    def load_roles(self):
+        q = self.c.execute(self.ROLES_QUERY)
+
+        roles = [
+            InspectedRole(
+                name=r.name,
+                superuser=r.superuser,
+                createdb=r.createdb,
+                inherit=r.inherit,
+                login=r.login,
+                replication=r.replication,
+                bypassrls=r.bypassrls,
+                connection_limit=r.connection_limit,
+                password=r.password,
+                valid_until=r.valid_until,
+            )
+            for r in q
+        ]
+
+        self.roles = od((r.name, r) for r in roles)
+
+    def load_memberships(self):
+        q = self.c.execute(self.MEMBERSHIPS_QUERY)
+
+        memberships = [
+            InspectedMembership(
+                roleid=m.roleid,
+                member=m.member,
+                admin_option=m.admin_option,
+                grantor=m.grantor,
+            )
+            for m in q
+        ]
+
+        self.memberships = od((m.key, m) for m in memberships)
 
     def load_collations(self):
         q = self.c.execute(self.COLLATIONS_QUERY)

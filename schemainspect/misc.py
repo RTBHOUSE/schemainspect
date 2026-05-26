@@ -1,7 +1,7 @@
 import inspect
+from importlib.resources import files as _resource_files
 
 import six
-from pkg_resources import resource_stream as pkg_resource_stream
 
 
 def connection_from_s_or_c(s_or_c):  # pragma: no cover
@@ -48,7 +48,7 @@ def external_caller():
 
 def resource_stream(subpath):
     module_name = external_caller()
-    return pkg_resource_stream(module_name, subpath)
+    return _resource_files(module_name).joinpath(subpath).open("rb")
 
 
 def resource_text(subpath):
